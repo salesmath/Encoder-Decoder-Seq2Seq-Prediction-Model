@@ -1,0 +1,220 @@
+# This program is an encoder-decoder model for sequence to sequence prediction with the library Keras. 
+
+import tensorflow as tf
+import numpy as np
+import pandas as pd
+import sklearn
+from tensorflow import keras
+from tensorflow.keras import layers
+from keras.models import Model
+from keras.layers import Input, LSTM, Dense
+
+# Part 1: Encoder-decoder model with Keras.
+
+def define_models(n_input, n_output, n_units):
+    # define training encoder
+    encoder_inputs = Input(shape=(None, n_input))
+    encoder = LSTM(n_units, return_state=True)
+    encoder_outputs, state_h, state_c = encoder(encoder_inputs)
+    encoder_states = [state_h, state_c]
+    # define training decoder
+    decoder_inputs = Input(shape=(None, n_output))
+    decoder_lstm = LSTM(n_units, return_sequences=True, return_state=True)
+    decoder_outputs, _, _ = decoder_lstm(decoder_inputs, initial_state=encoder_states)
+    decoder_dense = Dense(n_output, activation='softmax')
+    decoder_outputs = decoder_dense(decoder_outputs)
+    model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+    # define inference encoder
+    encoder_model = Model(encoder_inputs, encoder_states)
+    # define inference decoder
+    decoder_state_input_h = Input(shape=(n_units,))
+    decoder_state_input_c = Input(shape=(n_units,))
+    decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+    decoder_outputs, state_h, state_c = decoder_lstm(decoder_inputs, initial_state=decoder_states_inputs)
+    decoder_states = [state_h, state_c]
+    decoder_outputs = decoder_dense(decoder_outputs)
+    decoder_model = Model([decoder_inputs] + decoder_states_inputs, [decoder_outputs] + decoder_states)
+    # return all models
+    return model, encoder_model, decoder_model
+
+# Train model by giving source and target sequences for model to take source and
+# shifted version of target sequence as input and predicts the target sequence.
+
+# Model intended to draw recursively when generating target sequences for new
+# source sequences.
+
+# Generate target sequence given source sequence.
+
+def predict_sequence(infenc, infdec, source, n_steps, cardinality):
+    # encode
+    state = infenc.predict(source)
+    # start of sequence input
+    target_seq = array([0.0 for _ in range(cardinality)]).reshape(1, 1, cardinality)
+    # collect predictions
+    output = list()
+    for t in range(n_steps):
+        # predict next char
+        yhat, h, c = infdec.predict([target_seq] + state)
+        # store prediction
+        output.append(yhat[0,0,:])
+        # update state
+        state = [h, c]
+        # update target sequence
+        target_seq = yhat
+    return array(output)
+
+# Part 2: Scalable Sequence to Sequence Problem.
+
+from random import randint
+from numpy import array
+from numpy import argmax
+from keras.utils import to_categorical
+
+# Sequence of random integers.
+def generate_sequence(length, n_unique):
+	return [randint(1, n_unique-1) for _ in range(length)]
+
+# Prepare data for the LSTM.
+def get_dataset(n_in, n_out, cardinality, n_samples):
+	X1, X2, y = list(), list(), list()
+	for _ in range(n_samples):
+		# generate source sequence
+		source = generate_sequence(n_in, cardinality)
+		# define target sequence
+		target = source[:n_out]
+		target.reverse()
+		# create padded input target sequence
+		target_in = [0] + target[:-1]
+		# encode
+		src_encoded = to_categorical([source], num_classes=cardinality)
+		tar_encoded = to_categorical([target], num_classes=cardinality)
+		tar2_encoded = to_categorical([target_in], num_classes=cardinality)
+		# store
+		X1.append(src_encoded)
+		X2.append(tar2_encoded)
+		y.append(tar_encoded)
+	return array(X1), array(X2), array(y)
+
+# Decode a one hot encoded string.
+def one_hot_decode(encoded_seq):
+	return [argmax(vector) for vector in encoded_seq]
+
+# Configure problem.
+n_features = 50 + 1
+n_steps_in = 6
+n_steps_out = 3
+
+# Generate a single source and target sequence.
+X1, X2, y = get_dataset(n_steps_in, n_steps_out, n_features, 1)
+print(X1.shape, X2.shape, y.shape)
+print('X1=%s, X2=%s, y=%s' % (one_hot_decode(X1[0]), one_hot_decode(X2[0]), one_hot_decode(y[0])))
+
+# Part 3: Encoder-Decoder LSTM for Sequence Prediction.
+
+from numpy import array
+from numpy import argmax
+from numpy import array_equal
+from keras.utils import to_categorical
+from keras.models import Model
+from keras.layers import Input
+from keras.layers import LSTM
+from keras.layers import Dense
+ 
+# Randomly generate an integer sequence in the interval (1, n_features), the sequence length is n_steps_in
+def generate_sequence(length, n_unique):
+	return [randint(1, n_unique-1) for _ in range(length)]
+ 
+# Construct the training data needed for the input of the LSTM model
+def get_dataset(n_in, n_out, cardinality, n_samples):
+	X1, X2, y = list(), list(), list()
+	for _ in range(n_samples):
+		# Generate input sequence
+		source = generate_sequence(n_in, cardinality)
+		# Define the target sequence, here are the first three data of the input sequence
+		target = source[:n_out]
+		target.reverse()
+		# Shift forward one time step target sequence
+		target_in = [0] + target[:-1]
+		# Use to_categorical function directly for on_hot encoding
+		src_encoded = to_categorical(source, num_classes=cardinality)
+		tar_encoded = to_categorical(target, num_classes=cardinality)
+		tar2_encoded = to_categorical(target_in, num_classes=cardinality)
+		
+		X1.append(src_encoded)
+		X2.append(tar2_encoded)
+		y.append(tar_encoded)
+	return array(X1), array(X2), array(y)
+ 
+# Construct the Seq2Seq training model model, and the Encoder model needed for new sequence prediction: encoder_model and Decoder model: decoder_model
+def define_models(n_input, n_output, n_units):
+	# Encoder in training model
+	encoder_inputs = Input(shape=(None, n_input))
+	encoder = LSTM(n_units, return_state=True)
+	encoder_outputs, state_h, state_c = encoder(encoder_inputs)
+	encoder_states = [state_h, state_c] #Only keep the encoding state vector
+	# Decoder in training model
+	decoder_inputs = Input(shape=(None, n_output))
+	decoder_lstm = LSTM(n_units, return_sequences=True, return_state=True)
+	decoder_outputs, _, _ = decoder_lstm(decoder_inputs, initial_state=encoder_states)
+	decoder_dense = Dense(n_output, activation='softmax')
+	decoder_outputs = decoder_dense(decoder_outputs)
+	model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+	# Encoder required for new sequence prediction
+	encoder_model = Model(encoder_inputs, encoder_states)
+	# Decoder needed for new sequence prediction
+	decoder_state_input_h = Input(shape=(n_units,))
+	decoder_state_input_c = Input(shape=(n_units,))
+	decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+	decoder_outputs, state_h, state_c = decoder_lstm(decoder_inputs, initial_state=decoder_states_inputs)
+	decoder_states = [state_h, state_c]
+	decoder_outputs = decoder_dense(decoder_outputs)
+	decoder_model = Model([decoder_inputs] + decoder_states_inputs, [decoder_outputs] + decoder_states)
+    # Return the three models needed
+	return model, encoder_model, decoder_model
+ 
+def predict_sequence(infenc, infdec, source, n_steps, cardinality):
+	# Enter the sequence code to get the coded state vector
+	state = infenc.predict(source)
+	# Initial target sequence input: calculate the first character of the target sequence by starting character, here is 0
+	target_seq = array([0.0 for _ in range(cardinality)]).reshape(1, 1, cardinality)
+	# Output sequence list
+	output = list()
+	for t in range(n_steps):
+		# predict next char
+		yhat, h, c = infdec.predict([target_seq] + state)
+		# Intercept the output sequence, take the last three
+		output.append(yhat[0,0,:])
+		# update status
+		state = [h, c]
+		# Update the target sequence (input for the next word prediction)
+		target_seq = yhat
+	return array(output)
+ 
+# one_hot decoding
+def one_hot_decode(encoded_seq):
+	return [argmax(vector) for vector in encoded_seq]
+ 
+# parameter settings
+n_features = 50 + 1
+n_steps_in = 6
+n_steps_out = 3
+# Define model
+train, infenc, infdec = define_models(n_features, n_features, 128)
+train.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['acc'])
+# Generate training data
+X1, X2, y = get_dataset(n_steps_in, n_steps_out, n_features, 100000)
+print(X1.shape,X2.shape,y.shape)
+# Evaluate model effect
+total, correct = 100, 0
+for _ in range(total):
+	X1, X2, y = get_dataset(n_steps_in, n_steps_out, n_features, 1)
+	target = predict_sequence(infenc, infdec, X1, n_steps_out, n_features)
+	if array_equal(one_hot_decode(y[0]), one_hot_decode(target)):
+		correct += 1
+print('Accuracy: %.2f%%'% (float(correct)/float(total)*100.0))
+# View forecast results
+for _ in range(10):
+	X1, X2, y = get_dataset(n_steps_in, n_steps_out, n_features, 1)
+	target = predict_sequence(infenc, infdec, X1, n_steps_out, n_features)
+	print('X=%sy=%s, yhat=%s'% (one_hot_decode(X1[0]), one_hot_decode(y[0]), one_hot_decode(target)))
+  
